@@ -1,0 +1,41 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "type": "cargo",
+      "hide": true,
+      "label": "build [debug]",
+      "command": "build",
+      "args": ["--profile", "dev"],
+      "options": {
+        "env": {
+          "DEFMT_LOG": "trace"
+        }
+      },
+      "problemMatcher": ["$rustc"],
+      "group": "build"
+    },
+    {
+      "label": "run [sol]",
+      "command": "cargo",
+      "args": ["run", "--profile", "sol"],
+      "options": {
+        "env": {
+          "DEFMT_LOG": "info"
+        }
+      },
+      "problemMatcher": ["$rustc"]
+    },
+    {
+      "label": "run [prod]",
+      "command": "cargo",
+      "args": ["run", "--profile", "prod"],
+      "options": {
+        "env": {
+          "DEFMT_LOG": "off"
+        }
+      },
+      "problemMatcher": ["$rustc"]
+    }
+  ]
+}

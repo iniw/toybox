@@ -1,0 +1,30 @@
+{
+  // Use IntelliSense to learn about possible attributes.
+  // Hover to view descriptions of existing attributes.
+  // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "probe-rs-debug",
+      "request": "launch",
+      "preLaunchTask": "build [debug]",
+      "name": "launch [debug]",
+      "cwd": "${workspaceFolder}",
+      "chip": "STM32F072RBT6",
+      "flashingConfig": {
+        "flashingEnabled": true
+      },
+      "env": {
+        "DEFMT_LOG": "trace",
+        "RUST_LOG": "trace"
+      },
+      "coreConfigs": [
+        {
+          "coreIndex": 0,
+          "programBinary": "target/thumbv6m-none-eabi/debug/${workspaceFolderBasename}",
+          "rttEnabled": true
+        }
+      ]
+    }
+  ]
+}

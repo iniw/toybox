@@ -1,0 +1,13 @@
+[target.thumbv6m-none-eabi]
+runner = "probe-rs run --chip STM32F072RBT6 --verify --no-location"
+rustflags = [
+    "-C",
+    "link-arg=-Tlink.x",
+    "-C",
+    "link-arg=--nmagic",
+    "-C",
+    "link-arg=-Tdefmt.x",
+]
+
+[build]
+target = "thumbv6m-none-eabi"
