@@ -7,6 +7,8 @@ rustflags = [
     "link-arg=--nmagic",
     "-C",
     "link-arg=-Tdefmt.x",
+    "-C",
+    "linker=flip-link",
 ]
 
 [build]

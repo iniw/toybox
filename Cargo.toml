@@ -55,5 +55,6 @@ debug = 2
 inherits = "release"
 opt-level = "s"
 lto = "fat"
-debug = 0
+strip = true
 codegen-units = 1
+incremental = false
