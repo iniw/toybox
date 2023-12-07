@@ -6,50 +6,54 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
+cortex-m = { version = "0.7.7", features = [
+    "inline-asm",
+    "critical-section-single-core",
+] }
 cortex-m-rt = "0.7.3"
-defmt = "0.3"
+defmt = "0.3.5"
 defmt-rtt = "0.4"
-heapless = "0.8"
-panic-probe = { version = "0.3", features = ["print-defmt"] }
-
-[dependencies.embassy-executor]
-git = "https://github.com/embassy-rs/embassy.git"
-rev = "85d5f42562ca9374e3200d652616af9533346c5e"
-features = [
+heapless = { version = "0.8", features = ["defmt-03"] }
+panic-probe = { version = "0.3.1", features = ["print-defmt"] }
+portable-atomic = { version = "1.6", default-features = false, features = [
+    "unsafe-assume-single-core",
+] }
+static_cell = { version = "2.0", features = ["nightly"] }
+embassy-stm32 = { version = "0.1.0", features = [
     "defmt",
+    "stm32f072rb",
+    "time",
+    "time-driver-any",
+    "exti",
+] }
+embassy-executor = { version = "0.4", features = [
     "arch-cortex-m",
     "executor-thread",
-    "integrated-timers",
+    "defmt",
     "nightly",
-]
+] }
+embassy-time = { version = "0.2", features = [
+    "defmt",
+    "defmt-timestamp-uptime",
+    "generic-queue",
+] }
+embassy-sync = { version = "0.5.0", features = ["defmt"] }
+embassy-futures = { version = "0.1.1" }
 
-[dependencies.embassy-stm32]
-git = "https://github.com/embassy-rs/embassy.git"
-rev = "85d5f42562ca9374e3200d652616af9533346c5e"
-features = ["defmt", "stm32f072rb", "time", "time-driver-any", "exti"]
-
-[dependencies.embassy-time]
-git = "https://github.com/embassy-rs/embassy.git"
-rev = "85d5f42562ca9374e3200d652616af9533346c5e"
-features = ["defmt", "defmt-timestamp-uptime"]
-
-[dependencies.embassy-sync]
-git = "https://github.com/embassy-rs/embassy.git"
-rev = "85d5f42562ca9374e3200d652616af9533346c5e"
-features = ["defmt"]
-
-[dependencies.embassy-futures]
-git = "https://github.com/embassy-rs/embassy.git"
-rev = "85d5f42562ca9374e3200d652616af9533346c5e"
+[patch.crates-io]
+embassy-stm32 = { git = "https://github.com/embassy-rs/embassy", rev = "83138ce68e506692aabd825eae39016ddb8fd2c4" }
+embassy-executor = { git = "https://github.com/embassy-rs/embassy", rev = "83138ce68e506692aabd825eae39016ddb8fd2c4" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy", rev = "83138ce68e506692aabd825eae39016ddb8fd2c4" }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy", rev = "83138ce68e506692aabd825eae39016ddb8fd2c4" }
+embassy-futures = { git = "https://github.com/embassy-rs/embassy", rev = "83138ce68e506692aabd825eae39016ddb8fd2c4" }
 
 [profile.sol]
 inherits = "release"
-incremental = true
-debug = true
+debug = 2
 
 [profile.prod]
 inherits = "release"
-debug = false
+opt-level = "s"
+lto = "fat"
+debug = 0
 codegen-units = 1
-lto = true

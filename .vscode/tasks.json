@@ -16,9 +16,9 @@
       "group": "build"
     },
     {
-      "label": "run [sol]",
+      "label": "build [sol]",
       "command": "cargo",
-      "args": ["run", "--profile", "sol"],
+      "args": ["build", "--profile", "sol"],
       "options": {
         "env": {
           "DEFMT_LOG": "info"
@@ -27,9 +27,31 @@
       "problemMatcher": ["$rustc"]
     },
     {
+      "label": "run [sol]",
+      "command": "cargo",
+      "args": ["run", "--profile", "sol"],
+      "options": {
+        "env": {
+          "DEFMT_LOG": "trace"
+        }
+      },
+      "problemMatcher": ["$rustc"]
+    },
+    {
       "label": "run [prod]",
       "command": "cargo",
       "args": ["run", "--profile", "prod"],
+      "options": {
+        "env": {
+          "DEFMT_LOG": "off"
+        }
+      },
+      "problemMatcher": ["$rustc"]
+    },
+    {
+      "label": "build [prod]",
+      "command": "cargo",
+      "args": ["build", "--profile", "prod"],
       "options": {
         "env": {
           "DEFMT_LOG": "off"
