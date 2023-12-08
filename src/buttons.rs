@@ -22,12 +22,14 @@ async fn button_controller_task(ctx: ButtonControllerContext) {
             First(_) => {
                 trace!("button #{} released", ctx.station);
                 ctx.recipe_controller_signal
-                    .signal(RecipeControllerEvent::ButtonPress);
+                    .send(RecipeControllerEvent::ButtonPress)
+                    .await;
             }
             Second(_) => {
                 trace!("button #{} was held", ctx.station);
                 ctx.recipe_controller_signal
-                    .signal(RecipeControllerEvent::CancelRecipe);
+                    .send(RecipeControllerEvent::CancelRecipe)
+                    .await;
             }
         }
 
@@ -45,7 +47,7 @@ pub(super) struct Peripherals {
 struct ButtonControllerContext {
     station: Station,
     peripherals: Peripherals,
-    recipe_controller_signal: &'static RecipeControllerSignal,
+    recipe_controller_signal: &'static RecipeControllerChannel,
 }
 
 pub fn spawn_tasks(
@@ -59,7 +61,7 @@ pub fn spawn_tasks(
             spawner.spawn(button_controller_task(ButtonControllerContext {
                 station: Station(i),
                 peripherals: unwrap!(iter.next()),
-                recipe_controller_signal: ctx.recipe_controller_signals[i]
+                recipe_controller_signal: ctx.recipe_controller_channels[i]
             }))
         );
     }

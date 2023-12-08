@@ -9,7 +9,7 @@ use embassy_stm32::gpio::Pin;
 use panic_probe as _;
 
 use crate::leds::LedSignal;
-use crate::recipes::RecipeControllerSignal;
+use crate::recipes::RecipeControllerChannel;
 use crate::stations::StationStatusSignal;
 
 mod buttons;
@@ -19,18 +19,20 @@ mod stations;
 
 struct GlobalContext {
     station_status_signals: stations::PerStationStaticData<StationStatusSignal>,
-    recipe_controller_signals: stations::PerStationStaticData<RecipeControllerSignal>,
+    recipe_controller_channels: stations::PerStationStaticData<RecipeControllerChannel>,
     led_signals: stations::PerStationStaticData<LedSignal>,
 }
 
 impl GlobalContext {
     fn new() -> Self {
         Self {
-            station_status_signals: stations::make_per_station_static_data!(StationStatusSignal),
-            recipe_controller_signals: stations::make_per_station_static_data!(
-                RecipeControllerSignal
+            station_status_signals: stations::make_per_station_static_data!(
+                StationStatusSignal::new()
             ),
-            led_signals: stations::make_per_station_static_data!(LedSignal),
+            recipe_controller_channels: stations::make_per_station_static_data!(
+                RecipeControllerChannel::new()
+            ),
+            led_signals: stations::make_per_station_static_data!(LedSignal::new()),
         }
     }
 }

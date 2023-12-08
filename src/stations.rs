@@ -9,15 +9,20 @@ pub const MAX_NUM_STATIONS: usize = 1;
 pub type PerStationData<T> = [T; MAX_NUM_STATIONS];
 pub type PerStationStaticData<T> = PerStationData<&'static T>;
 
-macro_rules! make_per_station_static_data {
-    ($t:ty) => {{
-        use static_cell::make_static;
-        type SPSDT = $t;
-
-        [make_static!(SPSDT::new()); stations::MAX_NUM_STATIONS]
+macro_rules! make_per_station_data {
+    ($e:expr) => {{
+        [$e; crate::stations::MAX_NUM_STATIONS]
     }};
 }
 
+macro_rules! make_per_station_static_data {
+    ($e:expr) => {{
+        use static_cell::make_static;
+        [make_static!($e); crate::stations::MAX_NUM_STATIONS]
+    }};
+}
+
+pub(crate) use make_per_station_data;
 pub(crate) use make_per_station_static_data;
 
 #[derive(Format, Clone, Copy)]
