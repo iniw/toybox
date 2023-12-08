@@ -52,6 +52,6 @@ async fn main(spawner: embassy_executor::Spawner) {
 
     recipes::spawn_tasks(&spawner, &ctx);
     stations::spawn_tasks(&spawner, &ctx);
-    leds::spawn_tasks(&spawner, leds_peripherals, &ctx);
-    buttons::spawn_tasks(&spawner, buttons_peripherals, &ctx);
+    leds::spawn_tasks(&spawner, &ctx, leds_peripherals);
+    buttons::spawn_tasks(&spawner, &ctx, buttons_peripherals);
 }

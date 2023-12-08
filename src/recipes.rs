@@ -48,11 +48,7 @@ pub enum RecipeControllerEvent {
     UpdateRecipe(Recipe),
     #[allow(dead_code)]
     UpdateFixedRecipe(Option<Recipe>),
-    #[allow(dead_code)]
-    InformAboutRecipe(&'static mut String<100>),
 }
-
-pub type RecipeControllerChannel = Channel<NoopRawMutex, RecipeControllerEvent, 5>;
 
 #[derive(Format)]
 pub enum RecipeExecutorEvent {
@@ -61,12 +57,18 @@ pub enum RecipeExecutorEvent {
     CancelRecipe(Station),
 }
 
-pub type RecipeExecutorChannel = Channel<NoopRawMutex, RecipeExecutorEvent, MAX_NUM_STATIONS>;
+const MAX_EVENTS_PER_STATION: usize = 5;
 
-const TRAVEL_TIME: Duration = Duration::from_secs(1);
+pub type RecipeControllerChannel =
+    Channel<NoopRawMutex, RecipeControllerEvent, MAX_EVENTS_PER_STATION>;
+
+pub type RecipeExecutorChannel =
+    Channel<NoopRawMutex, RecipeExecutorEvent, { MAX_NUM_STATIONS * MAX_EVENTS_PER_STATION }>;
+
 type StepQueue = Vec<StepExecutionInfo, { Recipe::MAX_STEPS * MAX_NUM_STATIONS }>;
 
 fn handle_executor_event(ctx: &mut RecipeExecutorContext, event: RecipeExecutorEvent) {
+    const TRAVEL_TIME: Duration = Duration::from_secs(1);
     use RecipeExecutorEvent::*;
     match event {
         ScheduleScald(station, new_step) => {
@@ -226,6 +228,8 @@ fn handle_executor_event(ctx: &mut RecipeExecutorContext, event: RecipeExecutorE
         CancelRecipe(canceled_station) => {
             ctx.step_queue
                 .retain(|info| info.station != canceled_station);
+            ctx.num_steps_per_station[canceled_station.0] = 0;
+            debug!("recipe canceled");
         }
     }
 
@@ -416,7 +420,6 @@ async fn recipe_controller_task(mut ctx: RecipeControllerContext) {
                     ctx.recipe_executor_channel
                         .send(RecipeExecutorEvent::CancelRecipe(ctx.station))
                         .await;
-                    debug!("recipe canceled");
                 }
             },
             UpdateFixedRecipe(new_fixed_recipe) => ctx.fixed_recipe = new_fixed_recipe,
@@ -427,7 +430,6 @@ async fn recipe_controller_task(mut ctx: RecipeControllerContext) {
                     warn!("this station already has a recipe");
                 }
             }
-            _ => todo!(),
         }
     }
 }
@@ -453,7 +455,7 @@ pub fn spawn_tasks(spawner: &Spawner, ctx: &'static crate::GlobalContext) {
     let recipe_executor_channel = make_static!(RecipeExecutorChannel::new());
     unwrap!(spawner.spawn(recipe_executor_task(RecipeExecutorContext {
         num_steps_per_station: make_per_station_data!(0usize),
-        step_queue: Vec::new(),
+        step_queue: StepQueue::new(),
         recipe_executor_channel,
         recipe_controller_channels: &ctx.recipe_controller_channels,
     })));

@@ -65,8 +65,8 @@ struct LedControllerContext {
 
 pub fn spawn_tasks(
     spawner: &Spawner,
-    peripherals: PerStationData<Peripherals>,
     ctx: &'static crate::GlobalContext,
+    peripherals: PerStationData<Peripherals>,
 ) {
     let mut iter = peripherals.into_iter();
     for i in 0..MAX_NUM_STATIONS {
