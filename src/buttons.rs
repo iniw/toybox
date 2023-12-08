@@ -3,7 +3,6 @@ use embassy_executor::task;
 use embassy_executor::Spawner;
 use embassy_futures::select::{select, Either::*};
 use embassy_stm32::exti;
-use embassy_stm32::gpio::Pin;
 use embassy_stm32::gpio::{AnyPin, Input, Pull};
 use embassy_time::Timer;
 
@@ -11,7 +10,7 @@ use crate::recipes::*;
 use crate::stations::*;
 
 #[task(pool_size = MAX_NUM_STATIONS)]
-async fn button_task(ctx: ButtonControlContext) {
+async fn button_controller_task(ctx: ButtonControllerContext) {
     let input = Input::new(ctx.peripherals.button_pin, Pull::Up);
     let mut button = exti::ExtiInput::new(input, ctx.peripherals.exti_channel);
 
@@ -43,7 +42,7 @@ pub(super) struct Peripherals {
     pub(super) exti_channel: exti::AnyChannel,
 }
 
-struct ButtonControlContext {
+struct ButtonControllerContext {
     station: Station,
     peripherals: Peripherals,
     recipe_controller_signal: &'static RecipeControllerSignal,
@@ -52,14 +51,16 @@ struct ButtonControlContext {
 pub fn spawn_tasks(
     spawner: &Spawner,
     peripherals: PerStationData<Peripherals>,
-    recipe_controller_signals: &'static PerStationStaticData<RecipeControllerSignal>,
+    ctx: &'static crate::GlobalContext,
 ) {
     let mut iter = peripherals.into_iter();
     for i in 0..MAX_NUM_STATIONS {
-        unwrap!(spawner.spawn(button_task(ButtonControlContext {
-            station: Station(i),
-            peripherals: unwrap!(iter.next()),
-            recipe_controller_signal: recipe_controller_signals[i]
-        })));
+        unwrap!(
+            spawner.spawn(button_controller_task(ButtonControllerContext {
+                station: Station(i),
+                peripherals: unwrap!(iter.next()),
+                recipe_controller_signal: ctx.recipe_controller_signals[i]
+            }))
+        );
     }
 }

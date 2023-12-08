@@ -5,7 +5,7 @@ use embassy_executor::{task, Spawner};
 use embassy_futures::select::{select, Either::*};
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, channel::Channel, signal::Signal};
 use embassy_time::{Duration, Instant, Timer};
-use heapless::Vec;
+use heapless::{String, Vec};
 use static_cell::make_static;
 
 use crate::stations::*;
@@ -37,17 +37,23 @@ pub enum RecipeControllerEvent {
     AdvanceRecipe,
     ButtonPress,
     CancelRecipe,
+    #[allow(dead_code)]
     UpdateRecipe(Recipe),
+    #[allow(dead_code)]
     UpdateFixedRecipe(Option<Recipe>),
+    #[allow(dead_code)]
+    InformAboutRecipe(&'static mut String<100>),
 }
 
 pub type RecipeControllerSignal = Signal<NoopRawMutex, RecipeControllerEvent>;
 
 #[derive(Format)]
 pub enum RecipeExecutorEvent {
-    ScheduleSteps(Station, RecipeSteps),
+    ScheduleAttacks(Station, RecipeSteps),
     ScheduleScald(Station, Step),
+    #[allow(dead_code)]
     AdvanceRecipe(Station),
+    #[allow(dead_code)]
     CancelRecipe(Station),
 }
 
@@ -93,7 +99,7 @@ fn handle_executor_event(step_queue: &mut StepQueue, event: RecipeExecutorEvent)
                 }
             }
         }
-        RecipeExecutorEvent::ScheduleSteps(station, steps) => {
+        RecipeExecutorEvent::ScheduleAttacks(station, steps) => {
             if step_queue.is_empty() {
                 let _ = steps
                     .iter()
@@ -205,6 +211,7 @@ async fn execute_missed_step(
     instant_as_millis: u64,
 ) {
     let delta = now_as_millis - instant_as_millis;
+    // this function may get called with `now_as_millis` == `instant_as_millis`, which just makes the loop a waste of time
     if delta > 0 {
         warn!("current step is in the past - delta = {}", delta);
 
@@ -218,7 +225,7 @@ async fn execute_missed_step(
 }
 
 #[task]
-async fn recipe_executor_task(ctx: RecipeExecutorTaskContext) {
+async fn recipe_executor_task(ctx: RecipeExecutorContext) {
     let mut step_queue = StepQueue::new();
     loop {
         match step_queue.is_empty() {
@@ -250,12 +257,14 @@ async fn recipe_executor_task(ctx: RecipeExecutorTaskContext) {
                         .await
                     }
                     Ordering::Greater => {
+                        // the instant hasn't arrived yet, but we can't just wait for it since we have to keep receiving events
+                        // this loop makes us do both at the same time
                         while let Second(event) =
                             select(Timer::at(instant), ctx.recipe_executor_channel.receive()).await
                         {
                             handle_executor_event(&mut step_queue, event);
 
-                            // missed the timer while executing the event
+                            // interpreting the event took long enough for the step instant to be missed
                             if now_as_millis() >= instant_as_millis {
                                 execute_missed_step(
                                     &step,
@@ -270,6 +279,8 @@ async fn recipe_executor_task(ctx: RecipeExecutorTaskContext) {
                                 return;
                             }
                         }
+
+                        // falling through the `while` above means that the instant has arrived
                         execute_step(
                             &step,
                             station,
@@ -295,7 +306,7 @@ fn reset_station(
 }
 
 #[task(pool_size = MAX_NUM_STATIONS)]
-async fn recipe_controller_task(ctx: RecipeControllerTaskContext) {
+async fn recipe_controller_task(ctx: RecipeControllerContext) {
     let mut station_status = StationStatus::Free;
     let mut fixed_recipe: Option<Recipe> = None;
 
@@ -320,8 +331,9 @@ async fn recipe_controller_task(ctx: RecipeControllerTaskContext) {
     });
 
     loop {
+        use RecipeControllerEvent::*;
         match ctx.recipe_controller_signal.wait().await {
-            RecipeControllerEvent::ButtonPress => match station_status {
+            ButtonPress => match station_status {
                 // try initiating a new recipe
                 StationStatus::Free => {
                     // if there is no host-sent recipe try using the fixed one
@@ -338,7 +350,7 @@ async fn recipe_controller_task(ctx: RecipeControllerTaskContext) {
                             ctx.station_status_signal.signal(station_status);
 
                             ctx.recipe_executor_channel
-                                .send(RecipeExecutorEvent::ScheduleSteps(
+                                .send(RecipeExecutorEvent::ScheduleAttacks(
                                     ctx.station,
                                     recipe.attacks.clone(),
                                 ))
@@ -358,7 +370,7 @@ async fn recipe_controller_task(ctx: RecipeControllerTaskContext) {
                                 ctx.station,
                                 unwrap!(recipe.scald).clone(),
                             ),
-                            StationStatus::Attacking => RecipeExecutorEvent::ScheduleSteps(
+                            StationStatus::Attacking => RecipeExecutorEvent::ScheduleAttacks(
                                 ctx.station,
                                 recipe.attacks.clone(),
                             ),
@@ -377,27 +389,27 @@ async fn recipe_controller_task(ctx: RecipeControllerTaskContext) {
                 }
                 _ => warn!("invalid button press"),
             },
-            RecipeControllerEvent::AdvanceRecipe => {
+            AdvanceRecipe => {
                 station_status.advance();
                 ctx.station_status_signal.signal(station_status);
 
                 match station_status {
                     StationStatus::Finalizing => {
-                        if let Some(recipe) = &recipe {
-                            if let Some(finalization_time) = recipe.finalization_time {
-                                // FIXME: use a proper event instead of creating a fake scald
-                                ctx.recipe_executor_channel
-                                    .send(RecipeExecutorEvent::ScheduleScald(
-                                        ctx.station,
-                                        Step {
-                                            duration: finalization_time,
-                                            interval: None,
-                                        },
-                                    ))
-                                    .await;
-                            } else {
-                                station_status = StationStatus::Finished;
-                                ctx.station_status_signal.signal(station_status);
+                        if let Some(some_recipe) = &recipe {
+                            match some_recipe.finalization_time {
+                                Some(duration) => {
+                                    Timer::after(duration).await;
+                                    reset_station(
+                                        &mut recipe,
+                                        &mut station_status,
+                                        ctx.station_status_signal,
+                                    );
+                                    debug!("recipe #{} - finalization time elapsed", ctx.station);
+                                }
+                                None => {
+                                    station_status = StationStatus::Finished;
+                                    ctx.station_status_signal.signal(station_status);
+                                }
                             }
                         } else {
                             error!("no recipe to finalize?!");
@@ -415,7 +427,7 @@ async fn recipe_controller_task(ctx: RecipeControllerTaskContext) {
                     _ => debug!("recipe advanced"),
                 }
             }
-            RecipeControllerEvent::CancelRecipe => match station_status {
+            CancelRecipe => match station_status {
                 StationStatus::Free => {
                     warn!("no recipe to cancel");
                 }
@@ -424,52 +436,45 @@ async fn recipe_controller_task(ctx: RecipeControllerTaskContext) {
                     debug!("recipe canceled");
                 }
             },
-            RecipeControllerEvent::UpdateFixedRecipe(new_fixed_recipe) => {
-                fixed_recipe = new_fixed_recipe
-            }
-            RecipeControllerEvent::UpdateRecipe(new_recipe) => {
+            UpdateFixedRecipe(new_fixed_recipe) => fixed_recipe = new_fixed_recipe,
+            UpdateRecipe(new_recipe) => {
                 if recipe.is_none() {
                     recipe = Some(new_recipe)
                 } else {
                     warn!("this station already has a recipe");
                 }
             }
+            _ => todo!(),
         }
     }
 }
 
-struct RecipeExecutorTaskContext {
+struct RecipeExecutorContext {
     recipe_executor_channel: &'static RecipeExecutorChannel,
     recipe_controller_signals: &'static PerStationStaticData<RecipeControllerSignal>,
 }
 
-struct RecipeControllerTaskContext {
+struct RecipeControllerContext {
     station: Station,
     recipe_executor_channel: &'static RecipeExecutorChannel,
     recipe_controller_signal: &'static RecipeControllerSignal,
     station_status_signal: &'static StationStatusSignal,
 }
 
-pub fn spawn_tasks(
-    spawner: &Spawner,
-    station_status_signals: &'static PerStationStaticData<StationStatusSignal>,
-    recipe_controller_signals: &'static PerStationStaticData<RecipeControllerSignal>,
-) {
+pub fn spawn_tasks(spawner: &Spawner, ctx: &'static crate::GlobalContext) {
     let recipe_executor_channel = make_static!(RecipeExecutorChannel::new());
-    unwrap!(
-        spawner.spawn(recipe_executor_task(RecipeExecutorTaskContext {
-            recipe_executor_channel,
-            recipe_controller_signals: recipe_controller_signals,
-        }))
-    );
+    unwrap!(spawner.spawn(recipe_executor_task(RecipeExecutorContext {
+        recipe_executor_channel,
+        recipe_controller_signals: &ctx.recipe_controller_signals,
+    })));
 
     for i in 0..MAX_NUM_STATIONS {
         unwrap!(
-            spawner.spawn(recipe_controller_task(RecipeControllerTaskContext {
+            spawner.spawn(recipe_controller_task(RecipeControllerContext {
                 station: Station(i),
                 recipe_executor_channel,
-                recipe_controller_signal: recipe_controller_signals[i],
-                station_status_signal: station_status_signals[i],
+                recipe_controller_signal: ctx.recipe_controller_signals[i],
+                station_status_signal: ctx.station_status_signals[i],
             }))
         );
     }

@@ -12,25 +12,9 @@ pub type PerStationStaticData<T> = PerStationData<&'static T>;
 macro_rules! make_per_station_static_data {
     ($t:ty) => {{
         use static_cell::make_static;
-
-        type SPSD<T> = crate::stations::PerStationStaticData<T>;
         type SPSDT = $t;
 
-        let temp: SPSD<SPSDT> = [make_static!(SPSDT::new()); stations::MAX_NUM_STATIONS];
-        let res: &'static SPSD<SPSDT> = make_static!(temp);
-
-        res
-    }};
-    (mut $t:ty) => {{
-        use static_cell::make_static;
-
-        type SPSD<T> = crate::stations::PerStationStaticData<T>;
-        type SPSDT = $t;
-
-        let temp = [make_static!(SPSDT::new()); stations::MAX_NUM_STATIONS];
-        let res = make_static!(temp);
-
-        res
+        [make_static!(SPSDT::new()); stations::MAX_NUM_STATIONS]
     }};
 }
 
@@ -67,7 +51,7 @@ pub struct Station(pub usize);
 async fn station_status_task(ctx: StationControlContext) {
     loop {
         let new_status = ctx.station_status_signal.wait().await;
-        debug!("new status = {}", new_status);
+        debug!("station #{} new status = {}", ctx.station, new_status);
         match new_status {
             StationStatus::Free => {
                 ctx.led_signal.signal(LedStatus::Off);
@@ -92,16 +76,12 @@ struct StationControlContext {
     led_signal: &'static LedSignal,
 }
 
-pub fn spawn_tasks(
-    spawner: &Spawner,
-    station_status_signals: &'static PerStationStaticData<StationStatusSignal>,
-    led_signals: &'static PerStationStaticData<LedSignal>,
-) {
+pub fn spawn_tasks(spawner: &Spawner, ctx: &'static crate::GlobalContext) {
     for i in 0..MAX_NUM_STATIONS {
         unwrap!(spawner.spawn(station_status_task(StationControlContext {
             station: Station(i),
-            station_status_signal: station_status_signals[i],
-            led_signal: led_signals[i],
+            station_status_signal: ctx.station_status_signals[i],
+            led_signal: ctx.led_signals[i],
         })));
     }
 }
