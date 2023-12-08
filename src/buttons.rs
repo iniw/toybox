@@ -1,9 +1,9 @@
-use defmt::debug;
-use defmt::unwrap;
+use defmt::{trace, unwrap};
 use embassy_executor::task;
 use embassy_executor::Spawner;
 use embassy_futures::select::{select, Either::*};
 use embassy_stm32::exti;
+use embassy_stm32::gpio::Pin;
 use embassy_stm32::gpio::{AnyPin, Input, Pull};
 use embassy_time::Timer;
 
@@ -12,23 +12,21 @@ use crate::stations::*;
 
 #[task(pool_size = MAX_NUM_STATIONS)]
 async fn button_task(ctx: ButtonControlContext) {
-    let (pin, exti_channel) = ctx.peripherals;
-
-    let input = Input::new(pin, Pull::Up);
-    let mut button = exti::ExtiInput::new(input, exti_channel);
+    let input = Input::new(ctx.peripherals.button_pin, Pull::Up);
+    let mut button = exti::ExtiInput::new(input, ctx.peripherals.exti_channel);
 
     loop {
         button.wait_for_rising_edge().await;
-        debug!("button pressed");
+        trace!("button #{} pressed", ctx.station);
 
         match select(button.wait_for_falling_edge(), Timer::after_secs(3)).await {
             First(_) => {
-                debug!("button released");
+                trace!("button #{} released", ctx.station);
                 ctx.recipe_controller_signal
                     .signal(RecipeControllerEvent::ButtonPress);
             }
             Second(_) => {
-                debug!("button was held");
+                trace!("button #{} was held", ctx.station);
                 ctx.recipe_controller_signal
                     .signal(RecipeControllerEvent::CancelRecipe);
             }
@@ -40,21 +38,26 @@ async fn button_task(ctx: ButtonControlContext) {
     }
 }
 
-type Peripherals = (AnyPin, exti::AnyChannel);
+pub(super) struct Peripherals {
+    pub(super) button_pin: AnyPin,
+    pub(super) exti_channel: exti::AnyChannel,
+}
 
 struct ButtonControlContext {
+    station: Station,
     peripherals: Peripherals,
     recipe_controller_signal: &'static RecipeControllerSignal,
 }
 
 pub fn spawn_tasks(
     spawner: &Spawner,
-    peripherals: PerStationData<(AnyPin, exti::AnyChannel)>,
-    recipe_controller_signals: &PerStationData<&'static RecipeControllerSignal>,
+    peripherals: PerStationData<Peripherals>,
+    recipe_controller_signals: &'static PerStationStaticData<RecipeControllerSignal>,
 ) {
     let mut iter = peripherals.into_iter();
     for i in 0..MAX_NUM_STATIONS {
         unwrap!(spawner.spawn(button_task(ButtonControlContext {
+            station: Station(i),
             peripherals: unwrap!(iter.next()),
             recipe_controller_signal: recipe_controller_signals[i]
         })));

@@ -9,7 +9,6 @@ use heapless::Vec;
 use static_cell::make_static;
 
 use crate::stations::*;
-
 #[derive(Format, Clone, Copy)]
 pub struct Step {
     duration: Duration,
@@ -243,14 +242,13 @@ async fn recipe_executor_task(ctx: RecipeExecutorTaskContext) {
                         execute_missed_step(
                             &step,
                             station,
-                            ctx.recipe_controller_signal[station.0],
+                            ctx.recipe_controller_signals[station.0],
                             &mut step_queue,
                             now_as_millis(),
                             instant_as_millis,
                         )
                         .await
                     }
-
                     Ordering::Greater => {
                         while let Second(event) =
                             select(Timer::at(instant), ctx.recipe_executor_channel.receive()).await
@@ -262,7 +260,7 @@ async fn recipe_executor_task(ctx: RecipeExecutorTaskContext) {
                                 execute_missed_step(
                                     &step,
                                     station,
-                                    ctx.recipe_controller_signal[station.0],
+                                    ctx.recipe_controller_signals[station.0],
                                     &mut step_queue,
                                     now_as_millis(),
                                     instant_as_millis,
@@ -276,7 +274,7 @@ async fn recipe_executor_task(ctx: RecipeExecutorTaskContext) {
                             &step,
                             station,
                             &step_queue,
-                            ctx.recipe_controller_signal[station.0],
+                            ctx.recipe_controller_signals[station.0],
                         )
                         .await;
                     }
@@ -297,7 +295,7 @@ fn reset_station(
 }
 
 #[task(pool_size = MAX_NUM_STATIONS)]
-async fn recipe_controller_task(station: Station, ctx: RecipeControllerTaskContext) {
+async fn recipe_controller_task(ctx: RecipeControllerTaskContext) {
     let mut station_status = StationStatus::Free;
     let mut fixed_recipe: Option<Recipe> = None;
 
@@ -341,7 +339,7 @@ async fn recipe_controller_task(station: Station, ctx: RecipeControllerTaskConte
 
                             ctx.recipe_executor_channel
                                 .send(RecipeExecutorEvent::ScheduleSteps(
-                                    station,
+                                    ctx.station,
                                     recipe.attacks.clone(),
                                 ))
                                 .await;
@@ -357,12 +355,13 @@ async fn recipe_controller_task(station: Station, ctx: RecipeControllerTaskConte
 
                         let event = match station_status {
                             StationStatus::Scalding => RecipeExecutorEvent::ScheduleScald(
-                                station,
+                                ctx.station,
                                 unwrap!(recipe.scald).clone(),
                             ),
-                            StationStatus::Attacking => {
-                                RecipeExecutorEvent::ScheduleSteps(station, recipe.attacks.clone())
-                            }
+                            StationStatus::Attacking => RecipeExecutorEvent::ScheduleSteps(
+                                ctx.station,
+                                recipe.attacks.clone(),
+                            ),
                             _ => unreachable!(),
                         };
 
@@ -389,7 +388,7 @@ async fn recipe_controller_task(station: Station, ctx: RecipeControllerTaskConte
                                 // FIXME: use a proper event instead of creating a fake scald
                                 ctx.recipe_executor_channel
                                     .send(RecipeExecutorEvent::ScheduleScald(
-                                        station,
+                                        ctx.station,
                                         Step {
                                             duration: finalization_time,
                                             interval: None,
@@ -439,42 +438,39 @@ async fn recipe_controller_task(station: Station, ctx: RecipeControllerTaskConte
     }
 }
 
-struct SharedRecipeTaskContext<C, S> {
+struct RecipeExecutorTaskContext {
     recipe_executor_channel: &'static RecipeExecutorChannel,
-    recipe_controller_signal: C,
-    station_status_signal: S,
+    recipe_controller_signals: &'static PerStationStaticData<RecipeControllerSignal>,
 }
 
-type RecipeExecutorTaskContext = SharedRecipeTaskContext<
-    &'static PerStationData<&'static RecipeControllerSignal>,
-    &'static PerStationData<&'static StationStatusSignal>,
->;
-
-type RecipeControllerTaskContext =
-    SharedRecipeTaskContext<&'static RecipeControllerSignal, &'static StationStatusSignal>;
+struct RecipeControllerTaskContext {
+    station: Station,
+    recipe_executor_channel: &'static RecipeExecutorChannel,
+    recipe_controller_signal: &'static RecipeControllerSignal,
+    station_status_signal: &'static StationStatusSignal,
+}
 
 pub fn spawn_tasks(
     spawner: &Spawner,
-    recipe_executor_channel: &'static RecipeExecutorChannel,
-    recipe_controller_signals: &'static PerStationData<&'static RecipeControllerSignal>,
-    station_status_signals: &'static PerStationData<&'static StationStatusSignal>,
+    station_status_signals: &'static PerStationStaticData<StationStatusSignal>,
+    recipe_controller_signals: &'static PerStationStaticData<RecipeControllerSignal>,
 ) {
+    let recipe_executor_channel = make_static!(RecipeExecutorChannel::new());
     unwrap!(
         spawner.spawn(recipe_executor_task(RecipeExecutorTaskContext {
             recipe_executor_channel,
-            recipe_controller_signal: recipe_controller_signals,
-            station_status_signal: station_status_signals,
+            recipe_controller_signals: recipe_controller_signals,
         }))
     );
 
     for i in 0..MAX_NUM_STATIONS {
-        unwrap!(spawner.spawn(recipe_controller_task(
-            Station(i),
-            RecipeControllerTaskContext {
+        unwrap!(
+            spawner.spawn(recipe_controller_task(RecipeControllerTaskContext {
+                station: Station(i),
                 recipe_executor_channel,
                 recipe_controller_signal: recipe_controller_signals[i],
                 station_status_signal: station_status_signals[i],
-            }
-        )));
+            }))
+        );
     }
 }
