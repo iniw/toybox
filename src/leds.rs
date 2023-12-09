@@ -1,77 +1,76 @@
-use defmt::{trace, unreachable, unwrap, Format};
-use embassy_executor::{task, Spawner};
+use defmt::{unreachable, *};
+use embassy_executor::*;
 use embassy_futures::select::{select, Either::*};
-use embassy_stm32::gpio::{AnyPin, Level, Output, Speed};
-use embassy_sync::{blocking_mutex::raw::NoopRawMutex, signal::Signal};
-use embassy_time::Timer;
+use embassy_stm32::gpio::*;
+use embassy_sync::{blocking_mutex::raw::NoopRawMutex, signal};
+use embassy_time::*;
 
-use crate::stations::{PerStationData, Station, MAX_NUM_STATIONS};
+use crate::stations;
 
-#[task(pool_size = MAX_NUM_STATIONS)]
-async fn led_controller_task(ctx: LedControllerContext) {
+struct Context {
+    station: stations::Station,
+    peripherals: Peripherals,
+    led_signal: &'static Signal,
+}
+
+pub(super) struct Peripherals {
+    pub led_pin: AnyPin,
+}
+
+#[derive(Format, Clone, Copy)]
+pub enum Status {
+    On,
+    Off,
+    Blinking,
+}
+
+impl Into<Level> for Status {
+    fn into(self) -> Level {
+        match self {
+            Status::On => Level::High,
+            Status::Off => Level::Low,
+            Status::Blinking => unreachable!("not in a binary state"),
+        }
+    }
+}
+
+pub type Signal = signal::Signal<NoopRawMutex, Status>;
+
+#[task(pool_size = stations::MAX_STATIONS)]
+async fn main_task(ctx: Context) {
     let mut led = Output::new(ctx.peripherals.led_pin, Level::Low, Speed::Low);
-    let mut led_status = LedStatus::Off;
-
+    let mut led_status = Status::Off;
     loop {
         match led_status {
-            LedStatus::Blinking => {
+            Status::Blinking => {
                 match select(Timer::after_millis(500), ctx.led_signal.wait()).await {
-                    First(_) => {
+                    First(..) => {
                         led.toggle();
-                        trace!("led #{} blink", ctx.station);
+                        trace!("#{}: led blink", ctx.station);
                     }
                     Second(signal) => {
                         led_status = signal;
                     }
                 }
             }
-            LedStatus::On | LedStatus::Off => {
+            Status::On | Status::Off => {
                 led.set_level(led_status.into());
-                trace!("led #{} status = {}", ctx.station, led_status);
+                trace!("#{}: led status = {}", ctx.station, led_status);
                 led_status = ctx.led_signal.wait().await;
             }
         }
     }
 }
 
-#[derive(Format, Clone, Copy)]
-pub enum LedStatus {
-    On,
-    Off,
-    Blinking,
-}
-
-impl Into<Level> for LedStatus {
-    fn into(self) -> Level {
-        match self {
-            LedStatus::On => Level::High,
-            LedStatus::Off => Level::Low,
-            LedStatus::Blinking => unreachable!("not in a binary state"),
-        }
-    }
-}
-
-pub type LedSignal = Signal<NoopRawMutex, LedStatus>;
-
-pub(super) struct Peripherals {
-    pub(super) led_pin: AnyPin,
-}
-
-struct LedControllerContext {
-    station: Station,
-    peripherals: Peripherals,
-    led_signal: &'static LedSignal,
-}
-
-pub fn spawn_tasks(
+pub(super) fn spawn_tasks(
     spawner: &Spawner,
-    ctx: &'static crate::GlobalContext,
-    peripherals: PerStationData<Peripherals>,
+    ctx: &'static crate::SharedContext,
+    peripherals: stations::PerStationData<Peripherals>,
 ) {
     let mut iter = peripherals.into_iter();
-    for i in 0..MAX_NUM_STATIONS {
-        unwrap!(spawner.spawn(led_controller_task(LedControllerContext {
-            station: Station(i),
+    for i in 0..stations::MAX_STATIONS {
+        unwrap!(spawner.spawn(main_task(Context {
+            station: stations::Station(i),
             peripherals: unwrap!(iter.next()),
             led_signal: ctx.led_signals[i]
         })));

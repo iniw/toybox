@@ -1,32 +1,32 @@
-use defmt::{debug, unreachable, unwrap, Format};
-use embassy_executor::{task, Spawner};
-use embassy_sync::{blocking_mutex::raw::NoopRawMutex, signal::Signal};
+use defmt::{unreachable, *};
+use embassy_executor::*;
+use embassy_sync::{blocking_mutex::raw::NoopRawMutex, signal};
 
-use crate::leds::{LedSignal, LedStatus};
-
-pub const MAX_NUM_STATIONS: usize = 1;
-
-pub type PerStationData<T> = [T; MAX_NUM_STATIONS];
-pub type PerStationStaticData<T> = PerStationData<&'static T>;
+use crate::leds;
 
 macro_rules! make_per_station_data {
     ($e:expr) => {{
-        [$e; crate::stations::MAX_NUM_STATIONS]
+        [$e; crate::stations::MAX_STATIONS]
     }};
 }
 
 macro_rules! make_per_station_static_data {
     ($e:expr) => {{
-        use static_cell::make_static;
-        [make_static!($e); crate::stations::MAX_NUM_STATIONS]
+        [static_cell::make_static!($e); crate::stations::MAX_STATIONS]
     }};
 }
 
 pub(crate) use make_per_station_data;
 pub(crate) use make_per_station_static_data;
 
+struct Context {
+    station: Station,
+    station_status_signal: &'static Signal,
+    led_signal: &'static leds::Signal,
+}
+
 #[derive(Format, Clone, Copy)]
-pub enum StationStatus {
+pub enum Status {
     Free,
     WaitingToScald,
     Scalding,
@@ -36,14 +36,14 @@ pub enum StationStatus {
     Finished,
 }
 
-impl StationStatus {
+impl Status {
     pub fn advance(&mut self) {
         *self = match self {
-            StationStatus::WaitingToScald => StationStatus::Scalding,
-            StationStatus::Scalding => StationStatus::WaitingToAttack,
-            StationStatus::WaitingToAttack => StationStatus::Attacking,
-            StationStatus::Attacking => StationStatus::Finalizing,
-            StationStatus::Finalizing => StationStatus::Finished,
+            Status::WaitingToScald => Status::Scalding,
+            Status::Scalding => Status::WaitingToAttack,
+            Status::WaitingToAttack => Status::Attacking,
+            Status::Attacking => Status::Finalizing,
+            Status::Finalizing => Status::Finished,
             _ => unreachable!("cannot advance finished recipe"),
         }
     }
@@ -52,38 +52,35 @@ impl StationStatus {
 #[derive(Format, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Station(pub usize);
 
-#[task(pool_size = MAX_NUM_STATIONS)]
-async fn station_status_task(ctx: StationControlContext) {
+pub type PerStationData<T> = [T; MAX_STATIONS];
+pub type PerStationStaticData<T> = PerStationData<&'static T>;
+
+pub type Signal = signal::Signal<NoopRawMutex, Status>;
+
+pub const MAX_STATIONS: usize = 1;
+
+#[task(pool_size = MAX_STATIONS)]
+async fn main_task(ctx: Context) {
     loop {
         let new_status = ctx.station_status_signal.wait().await;
-        debug!("station #{} new status = {}", ctx.station, new_status);
+        debug!("#{}: status changed [new = {}]", ctx.station, new_status);
         match new_status {
-            StationStatus::Free => {
-                ctx.led_signal.signal(LedStatus::Off);
+            Status::Free => {
+                ctx.led_signal.signal(leds::Status::Off);
             }
-            StationStatus::WaitingToAttack
-            | StationStatus::WaitingToScald
-            | StationStatus::Finished => {
-                ctx.led_signal.signal(LedStatus::Blinking);
+            Status::WaitingToAttack | Status::WaitingToScald | Status::Finished => {
+                ctx.led_signal.signal(leds::Status::Blinking);
             }
             _ => {
-                ctx.led_signal.signal(LedStatus::On);
+                ctx.led_signal.signal(leds::Status::On);
             }
         }
     }
 }
 
-pub type StationStatusSignal = Signal<NoopRawMutex, StationStatus>;
-
-struct StationControlContext {
-    station: Station,
-    station_status_signal: &'static StationStatusSignal,
-    led_signal: &'static LedSignal,
-}
-
-pub fn spawn_tasks(spawner: &Spawner, ctx: &'static crate::GlobalContext) {
-    for i in 0..MAX_NUM_STATIONS {
-        unwrap!(spawner.spawn(station_status_task(StationControlContext {
+pub(super) fn spawn_tasks(spawner: &Spawner, ctx: &'static crate::SharedContext) {
+    for i in 0..MAX_STATIONS {
+        unwrap!(spawner.spawn(main_task(Context {
             station: Station(i),
             station_status_signal: ctx.station_status_signals[i],
             led_signal: ctx.led_signals[i],
